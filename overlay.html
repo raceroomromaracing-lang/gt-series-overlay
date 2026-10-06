@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GT Series Cup - RaceRoom Overlay</title>
+
+<!--
+  VERSION PRÊTE À L'EMPLOI :
+  les fichiers officiels RaceRoom sont chargés directement depuis GitHub.
+  Si tu préfères les avoir en local, remplace ces 2 URLs par r3e.js et r3e-data.js.
+-->
+<script src="https://raw.githubusercontent.com/kwstudios-sweden/r3e-spectator-overlay/master/r3e.js"></script>
+<script src="https://raw.githubusercontent.com/kwstudios-sweden/r3e-spectator-overlay/master/r3e-data.js"></script>
+
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:#fff;font-family:Arial,Helvetica,sans-serif}
+#overlay{position:absolute;inset:0;pointer-events:none}
+.topbar{position:absolute;top:28px;left:40px;right:40px;height:76px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:rgba(7,9,13,.93);border-left:5px solid #fff;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+.series{font-size:27px;font-weight:900;letter-spacing:1px}
+.session{text-align:center}.sessionType{font-size:12px;text-transform:uppercase;opacity:.6;letter-spacing:2px}.phase{font-size:21px;font-weight:900;margin-top:2px}
+.track{text-align:right}.trackName{font-size:22px;font-weight:900}.layoutName{font-size:12px;opacity:.55;margin-top:3px}
+.leaderboard{position:absolute;top:132px;left:40px;width:470px;background:rgba(7,9,13,.91);box-shadow:0 10px 35px rgba(0,0,0,.35)}
+.leaderHeader{height:38px;display:grid;grid-template-columns:55px 1fr 110px;align-items:center;padding:0 15px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;opacity:.55;border-bottom:1px solid rgba(255,255,255,.12)}
+.driver{height:51px;display:grid;grid-template-columns:55px 1fr 110px;align-items:center;padding:0 15px;border-bottom:1px solid rgba(255,255,255,.07);pointer-events:auto;cursor:pointer}
+.driver:hover{background:rgba(255,255,255,.07)}
+.driver.selected{background:rgba(255,255,255,.13);border-left:4px solid #fff;padding-left:11px}
+.pos{font-size:19px;font-weight:900}.driverName{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.carName{font-size:9px;opacity:.48;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gap{text-align:right;font-size:13px;font-weight:800}
+.selectedPanel{position:absolute;left:40px;bottom:38px;width:470px;min-height:135px;padding:17px 20px;background:rgba(7,9,13,.94);box-shadow:0 10px 35px rgba(0,0,0,.4);border-top:3px solid #fff}
+.selectedName{font-size:24px;font-weight:900}.selectedCar{font-size:12px;opacity:.55;margin-top:3px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:17px}.statLabel{font-size:8px;text-transform:uppercase;opacity:.48;letter-spacing:1px}.statValue{font-size:20px;font-weight:900;margin-top:2px}
+.flag{position:absolute;top:132px;right:40px;min-width:175px;padding:12px 18px;text-align:center;font-size:17px;font-weight:900;background:rgba(7,9,13,.93);display:none}.flag.visible{display:block}
+.footer{position:absolute;right:40px;bottom:38px;padding:11px 16px;background:rgba(7,9,13,.88);font-size:12px;font-weight:800}
+.status{position:absolute;right:40px;top:225px;padding:8px 12px;background:rgba(7,9,13,.75);font-size:10px;opacity:.6}
+#error{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.82);font-size:22px;font-weight:800}
+</style>
+</head>
+
+<body>
+<div id="overlay">
+  <div class="topbar">
+    <div class="series">GT SERIES CUP</div>
+    <div class="session">
+      <div class="sessionType" id="sessionType">---</div>
+      <div class="phase" id="phase">---</div>
+    </div>
+    <div class="track">
+      <div class="trackName" id="trackName">---</div>
+      <div class="layoutName" id="layoutName">---</div>
+    </div>
+  </div>
+
+  <div class="leaderboard">
+    <div class="leaderHeader"><div>POS</div><div>PILOTE</div><div style="text-align:right">ÉCART</div></div>
+    <div id="drivers"></div>
+  </div>
+
+  <div class="selectedPanel">
+    <div class="selectedName" id="selectedName">Aucun pilote</div>
+    <div class="selectedCar" id="selectedCar">Clique sur un pilote pour le suivre</div>
+    <div class="stats">
+      <div><div class="statLabel">Vitesse</div><div class="statValue" id="speed">--</div></div>
+      <div><div class="statLabel">RPM</div><div class="statValue" id="rpm">--</div></div>
+      <div><div class="statLabel">Rapport</div><div class="statValue" id="gear">--</div></div>
+      <div><div class="statLabel">Tour</div><div class="statValue" id="lap">--</div></div>
+    </div>
+  </div>
+
+  <div class="flag" id="flag"></div>
+  <div class="footer"><span id="serverName">RaceRoom</span> &nbsp;•&nbsp; <span id="timeLeft">--:--</span></div>
+  <div class="status" id="status">OVERLAY GT SERIES</div>
+  <div id="error">Connexion RaceRoom non détectée</div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+let selectedSlot = null;
+let driversCache = [];
+let lastSelectedDriver = null;
+
+const $ = id => document.getElementById(id);
+
+function esc(v){
+  return String(v ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+}
+
+function call(fn, fallback){
+  try { return fn(); } catch(e){ console.warn(e); return fallback; }
+}
+
+function formatTime(sec){
+  if(sec == null || sec < 0) return "--:--";
+  const m=Math.floor(sec/60), s=Math.floor(sec%60);
+  return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+}
+
+function carInfo(liveryId){
+  if(typeof r3eData==="undefined" || !r3eData.cars) return null;
+  for(const id in r3eData.cars){
+    const car=r3eData.cars[id];
+    if(!car.liveries) continue;
+    for(const l of car.liveries){
+      if(Number(l.Id)===Number(liveryId)){
+        return {name:car.Name||"Voiture",brand:car.BrandName||"",team:l.TeamName||"",number:l.Name||""};
+      }
+    }
+  }
+  return null;
+}
+
+function renderDrivers(list){
+  driversCache=Array.isArray(list)?list:[];
+  const sorted=driversCache.slice().sort((a,b)=>
+    (a.scoreInfo?.positionOverall ?? 999)-(b.scoreInfo?.positionOverall ?? 999)
+  );
+
+  $("drivers").innerHTML="";
+  sorted.slice(0,15).forEach(d=>{
+    const pos=d.scoreInfo?.positionOverall ?? "--";
+    const car=carInfo(d.liveryId);
+    const carText=car ? ((car.brand?car.brand+" ":"")+car.name+(car.number?" • "+car.number:"")) : "Voiture";
+    let gap="LEADER";
+    if(Number(pos)!==1){
+      const td=d.scoreInfo?.timeDiff;
+      const ld=d.scoreInfo?.lapDiff;
+      if(td!=null && td>0) gap="+"+(td/1000).toFixed(3);
+      else if(ld>0) gap="+"+ld+" TOUR";
+      else gap="—";
+    }
+
+    const row=document.createElement("div");
+    row.className="driver"+(Number(d.slotId)===Number(selectedSlot)?" selected":"");
+    row.innerHTML=`<div class="pos">${pos}</div>
+      <div><div class="driverName">${esc(d.name||"Pilote")}</div>
+      <div class="carName">${esc(carText)}</div></div>
+      <div class="gap">${gap}</div>`;
+
+    row.addEventListener("click",()=>{
+      selectedSlot=Number(d.slotId);
+      lastSelectedDriver=d;
+      call(()=>r3e.setCamera.onboard(selectedSlot));
+      renderDrivers(driversCache);
+      updateSelected(true);
+    });
+    $("drivers").appendChild(row);
+  });
+}
+
+function updateEvent(){
+  if(!window.r3e) return;
+  r3e.getEventInfo(e=>{
+    if(!e) return;
+    $("serverName").textContent=e.serverName||"RaceRoom";
+    $("trackName").textContent=e.trackName||"---";
+    $("layoutName").textContent=e.layoutName||"";
+  });
+}
+
+function updateSession(){
+  if(!window.r3e) return;
+  r3e.getSessionInfo(s=>{
+    if(!s) return;
+    $("sessionType").textContent=s.type||"---";
+    $("phase").textContent=s.phase||"---";
+    $("timeLeft").textContent=formatTime(s.timeLeft);
+  });
+}
+
+function updateDrivers(){
+  if(!window.r3e) return;
+  r3e.getDriversInfo(list=>{
+    if(!Array.isArray(list) || !list.length) return;
+    if(selectedSlot===null){
+      const first=list.slice().sort((a,b)=>
+        (a.scoreInfo?.positionOverall??999)-(b.scoreInfo?.positionOverall??999)
+      )[0];
+      if(first){
+        selectedSlot=Number(first.slotId);
+        lastSelectedDriver=first;
+        call(()=>r3e.setCamera.onboard(selectedSlot));
+      }
+    }
+    renderDrivers(list);
+  });
+}
+
+function updateSelected(force=false){
+  if(selectedSlot===null || !window.r3e) return;
+
+  r3e.getDriverInfo({slotId:selectedSlot}, d=>{
+    if(!d) return;
+    lastSelectedDriver=d;
+
+    const car=carInfo(d.liveryId);
+    $("selectedName").textContent=d.name||"Pilote";
+    $("selectedCar").textContent=car
+      ? ((car.brand?car.brand+" ":"")+car.name+(car.team?" • "+car.team:""))
+      : "Voiture";
+    $("lap").textContent=d.scoreInfo?.laps ?? "--";
+
+    const f=d.scoreInfo?.flagInfo;
+    const box=$("flag");
+    if(f?.black){box.textContent="DRAPEAU NOIR";box.classList.add("visible")}
+    else if(f?.blue){box.textContent="DRAPEAU BLEU";box.classList.add("visible")}
+    else if(f?.yellow){box.textContent="DRAPEAU JAUNE";box.classList.add("visible")}
+    else box.classList.remove("visible");
+  });
+
+  r3e.getVehicleInfo({slotId:selectedSlot}, v=>{
+    if(!v) return;
+    $("speed").textContent=(v.speed??"--")+" km/h";
+    $("rpm").textContent=v.rpm??"--";
+    $("gear").textContent=v.gear===0?"N":(v.gear===-1?"R":(v.gear??"--"));
+  });
+}
+
+function start(){
+  if(!window.r3e){
+    $("error").style.display="flex";
+    $("status").textContent="R3E API NON DISPONIBLE";
+    return;
+  }
+
+  $("status").textContent="R3E CONNECTÉ";
+  updateEvent(); updateSession(); updateDrivers(); updateSelected();
+
+  setInterval(updateSession,1000);
+  setInterval(updateEvent,2000);
+  setInterval(updateDrivers,1000);
+  setInterval(updateSelected,500);
+}
+
+window.addEventListener("load",start);
+})();
+</script>
+</body>
+</html>
